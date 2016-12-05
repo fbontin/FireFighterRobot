@@ -2,7 +2,7 @@
 #include <Servo.h>
 
 #define NUM_SENSORS 6
-#define THRESHOLD 750
+#define THRESHOLD 300
 #define SLOW_SPEED 5
 
 Servo left;
@@ -12,12 +12,9 @@ unsigned int sensors[NUM_SENSORS];
 bool leftOnBlack, rightOnBlack, middleOnBlack;
 String path;
 bool replaceNext;
+int eventDetectionCounter;
 
 // sensors connected [X-XXXX-X]
-//QTRSensorsRC qtr((unsigned char[]) {2, 3, 4, 5, 6, 7}, NUM_SENSORS);
-
-
-//maybe working????
 QTRSensorsRC qtr((unsigned char[]) {6, 7, 8, 9, 10, 11}, NUM_SENSORS);
 
 
@@ -38,10 +35,15 @@ void setup() {
     delay(20);
   }  
   Serial.println("Calibration finished");
+  qtr.readLine(sensors);
+
+  delay(20);
   
   leftOnBlack = rightOnBlack = middleOnBlack = false;
   path = "";
   replaceNext = false;
+
+  eventDetectionCounter = 0;
 
   left.attach(4);
   right.attach(5);
@@ -54,47 +56,20 @@ void setup() {
  */
 void loop() {
 
-  // ------------- LOWER THRESHOLD PROBABLy ----------------------------
-  // or at least try a lower value.
   
-  //PRINT DETECTION
-  int detected = detectEvent();
-  if (detected > 0) {
-      switch (detected) {
-        case 1: 
-          Serial.println("T-cross");
-          break;
-        case 2: 
-          Serial.println("Right T-cross");
-          break;
-        case 3: 
-          Serial.println("Left T-cross");
-          break;
-        case 4: 
-          Serial.println("4-way");
-          break;
-        case 5: 
-          Serial.println("DEAD end");
-          break;
-        default:
-          Serial.println("Something is fucked");
-          break;
-      }
+  if ( eventDetectionCounter == 0 ) {
+    int detected = detectEvent();
+    act(detected);
+    replacePath(detected);
+  } else if (eventDetectionCounter >= 20) {
+    eventDetectionCounter = 0;
+    Serial.println("Stopped detecting for a bit ");
+  } else {
+    eventDetectionCounter++;
   }
-  //TODO: remember crossing (stack or something)
-  act(detected);
-
-  //Regulation and steering
-  unsigned int position = qtr.readLine(sensors);
-  int error = position - 2500; //2500 is middle
-  float p = 0.016;  //2500 = max(error)
-  float regSpeed = error * p;
-
-  int leftSpeed = speed + regSpeed;
-  int rightSpeed = speed - regSpeed;
- 
-  setWheelSpeed(leftSpeed, rightSpeed);
+  regulate();
   
+  //setWheelSpeed(0, 0);
   delay(20);
 }
 
@@ -117,9 +92,16 @@ void act(int detected) {
       replaceNext = true;
       uTurn();
       break;
+    case 6: //A turn
+      eventDetectionCounter = 1;
+      break;
     default:
       break;
   }
+  Serial.println("Path: " + path);
+}
+
+void replacePath(int detected) {
   if (replaceNext && detected < 5 && detected > 0) {
     String lastThree = path.substring(path.length() - 3);
     Serial.println("REPLACING" + lastThree);
@@ -161,7 +143,9 @@ void goStraight() {
 
 void uTurn() {
   Serial.println("U-turn");
-  path += "U";
+  if (path.charAt(path.length() - 1) != 'U'){
+      path += "U";
+  }
   setWheelSpeed(-20, 20);
   delayUntilOverLine();
 }
@@ -179,12 +163,13 @@ void delayUntilOverLine() {
 /* --------------------- DETECT EVENT ----------------------------------
  * Detects events. Return correct info. Does not choose path or move on.
  *
- *  Nothing  |  T-cross  |  RIght T  |  Left T  |  4-way  |  Dead End
- *     0           1           2          3          4           5
+ *  Nothing  |  T-cross  |  RIght T  |  Left T  |  4-way  |  Dead End  
+ *     0           1           2          3          4           5      
  */
 int detectEvent(){
 
   //BLACK IS TRUE. TRUE IS BLACK
+  qtr.readLine(sensors);
   leftOnBlack = sensors[5] > THRESHOLD;
   rightOnBlack = sensors[0] > THRESHOLD;
   middleOnBlack = sensors[2] > THRESHOLD || sensors[3] > THRESHOLD;
@@ -218,8 +203,9 @@ int detectEvent(){
       prevRight = true;
     }
   }
-  delay(500);
+  delay(700);
 
+  qtr.readLine(sensors);
   //save middleValue. True if there is a road forward
   middleOnBlack = sensors[2] > THRESHOLD || sensors[3] > THRESHOLD;
 
@@ -232,6 +218,7 @@ int detectEvent(){
     rightOnBlack = sensors[0] > THRESHOLD;
   }
 
+  
   //continue back until white again
   while (!leftOnBlack && !rightOnBlack) {
     delay(30); 
@@ -239,6 +226,7 @@ int detectEvent(){
     leftOnBlack = sensors[5] > THRESHOLD;
     rightOnBlack = sensors[0] > THRESHOLD;
   }
+  
   
   setWheelSpeed(0, 0);
 
@@ -254,14 +242,61 @@ int detectEvent(){
   else if (prevLeft && prevRight && middleOnBlack) {
     return 4; // 4-way
   }
-  //leftOnBlack = rightOnBlack = middleOnBlack = false;
-  return 0;
+
+  if(prevLeft) {
+    setWheelSpeed(10, 0);
+  }
+  if(prevRight) {
+    setWheelSpeed(0, 10);
+  }
+  delay(600);
+  return 6;
 }
 
 //sets speed for wheels
 void setWheelSpeed(int leftSpeed, int rightSpeed) {
   left.write(90 - leftSpeed);
   right.write(90 + rightSpeed);
+}
+
+//Regulates to follow line and returns regulation error.
+int regulate() {
+  unsigned int position = qtr.readLine(sensors);
+  int error = position - 2500; //2500 is middle
+  float p = 0.016;  //2500 = max(error)
+  float regSpeed = error * p;
+
+  int leftSpeed = speed + regSpeed;
+  int rightSpeed = speed - regSpeed;
+ 
+  setWheelSpeed(leftSpeed, rightSpeed);
+  return error;
+}
+
+//Prints the detected crossing.
+void printDetected(int detected) {
+  if (detected > 0) {
+      switch (detected) {
+        case 1: 
+          Serial.println("T-cross");
+          break;
+        case 2: 
+          Serial.println("Right T-cross");
+          break;
+        case 3: 
+          Serial.println("Left T-cross");
+          break;
+        case 4: 
+          Serial.println("4-way");
+          break;
+        case 5: 
+          Serial.println("DEAD end");
+          break;
+        default:
+          Serial.println("Weird result from detect");
+          break;
+      }
+  }
 }
 
 //prints values for all line sensors
