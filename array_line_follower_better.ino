@@ -13,6 +13,24 @@ bool leftOnBlack, rightOnBlack, middleOnBlack;
 String path;
 bool replaceNext;
 int eventDetectionCounter;
+int candles;
+
+//Gripper
+Servo gripperServo, lifterServo;
+int speedGripper = 30;
+int speedLifter = 20;
+
+//Switch
+const byte switchPinDown = 14;
+const byte switchPinUp = 15;
+volatile int lifterPosition = 0;
+
+//Ultra Sonic Sensor
+const int trigPin = 3;
+const int echoPin = 2;
+// Help variables
+long duration;
+int distance = 0;
 
 // sensors connected [X-XXXX-X]
 QTRSensorsRC qtr((unsigned char[]) {6, 7, 8, 9, 10, 11}, NUM_SENSORS);
@@ -20,7 +38,7 @@ QTRSensorsRC qtr((unsigned char[]) {6, 7, 8, 9, 10, 11}, NUM_SENSORS);
 
 void setup() {
   Serial.begin(9600);
-  
+
   Serial.println("Calibrating");
   
   //int calSpeed = 5;
@@ -41,6 +59,7 @@ void setup() {
   leftOnBlack = rightOnBlack = middleOnBlack = false;
   path = "";
   replaceNext = false;
+  candles = 0;
 
   eventDetectionCounter = 0;
 
@@ -48,6 +67,19 @@ void setup() {
   right.attach(5);
   speed = 20;
   setWheelSpeed(0, 0);
+
+  gripperServo.attach(13);
+  gripperServo.write(91);
+  lifterServo.attach(12);
+  lifterServo.write(90);
+
+  //Switch setup
+  pinMode(switchPinDown, INPUT_PULLUP);
+  pinMode(switchPinUp, INPUT_PULLUP);
+
+  //Ultra Sonic setup
+  pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
+  pinMode(echoPin, INPUT); // Sets the echoPin as an Input
 }
 
 /*
@@ -55,7 +87,7 @@ void setup() {
  */
 void loop() {
 
-  
+  //event detection
   if ( eventDetectionCounter == 0 ) {
     int detected = detectEvent();
     printDetected(detected);
@@ -67,6 +99,21 @@ void loop() {
   } else {
     eventDetectionCounter++;
   }
+
+  //distance detection
+  int distanceToObject = checkDistanceToObject();
+  //Serial.println(distanceToObject);
+  
+  if (distanceToObject < 5) {
+    
+    Serial.print("Close object detected at: ");
+    Serial.println(checkDistanceToObject());
+
+    Serial.println("Do lifting!");
+    setWheelSpeed(0, 0);
+    liftingSequence();
+  }
+
   regulate();
   
   //setWheelSpeed(0, 0);
@@ -75,29 +122,42 @@ void loop() {
 
 //when a crossing has been detected, this method acts (turns left, continues straight or whatever
 void act(int detected) {
-  switch (detected) {
-    case 1: //T-cross, left or right
-      turnLeft();
-      break;
-    case 2: //Right T
-      goStraight();
-      break;
-    case 3: //Left T
-      turnLeft();
-      break;
-    case 4: //4-way
-      turnLeft();
-      break;
-    case 5: //Dead end
-      replaceNext = true;
-      uTurn();
-      break;
-    case 6: //A turn
-      eventDetectionCounter = 1;
-      break;
-    default:
-      break;
-  }
+
+  if (candles < 3){
+    
+    switch (detected) {
+      case 1: //T-cross, left or right
+        turnLeft();
+        break;
+      case 2: //Right T
+        goStraight();
+        break;
+      case 3: //Left T
+        turnLeft();
+        break;
+      case 4: //4-way
+        turnLeft();
+        break;
+      case 5: //Dead end
+        replaceNext = true;
+        uTurn();
+        break;
+      case 6: //A turn
+        eventDetectionCounter = 1;
+        break;
+      default:
+        break;
+    }
+  } else {
+    ///// SUBSTRING SHIT AND GO BACKWARDS
+
+    if (path.length() != 0){
+      String lastString = path.substring(path.length()-1);
+      char last = lastString.c_str();
+      path = path.substring(0, path.length()-1);
+      Serial.println("last: " + last);  
+    }
+    }
   Serial.println("Path: " + path);
 }
 
@@ -125,6 +185,7 @@ void turnLeft() {
   delayUntilOverLine();
 }
 
+//NEVVAH Taidsted
 void turnRight() {
   Serial.println("Turning right");
   path += "R";
@@ -174,7 +235,7 @@ int detectEvent(){
   middleOnBlack = sensors[2] > THRESHOLD || sensors[3] > THRESHOLD;
   bool outerMiddleOnBlack = sensors[1] > THRESHOLD || sensors[4] > THRESHOLD;
 
-  printAllLineSensors();
+  //////////printAllLineSensors();
 
   if(!leftOnBlack && !rightOnBlack && !middleOnBlack && !outerMiddleOnBlack){
     return 5; //dead end
@@ -290,7 +351,7 @@ void printDetected(int detected) {
           Serial.println("DEAD end");
           break;
         default:
-          Serial.println("Weird result from detect");
+          Serial.println("Weird result from detect: " + detected);
           break;
       }
   }
@@ -305,3 +366,105 @@ void printAllLineSensors() {
     Serial.print(" ");
   }
 }
+
+/* ------------------- GRIPPER FUNCTIONS ------------------------------
+ * --------------------------------------------------------------------
+ * --------------------------------------------------------------------
+ */
+
+int checkDistanceToObject() {
+  
+  // Clears the trigPin
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  duration = pulseIn(echoPin, HIGH);
+  // Calculating the distance
+  distance = duration * 0.034 / 2;
+
+  return distance;
+}
+
+void liftingSequence() {
+
+  // Make sure gripper is open
+
+  Serial.println("Open gripper");
+  gripperServo.write(90 + speedGripper);
+  delay(800);
+
+  // Close to grip candle
+
+  Serial.println("Close to grip candle");
+  gripperServo.write(90 - speedGripper);
+  delay(900);
+  // lift candle with lifterServo until switchUp button pressed
+
+  Serial.println("lift candle with lifterServo until switchUp button pressed");
+  
+  while (lifterPosition != 1) {
+    readSwitchUp();
+    lifterServo.write(90 - speedLifter);
+  }
+
+  delay(200);
+
+  // Open gripper a certain delay
+  Serial.println("Open gripper a certain delay");
+
+  gripperServo.write(90 + speedGripper);
+  delay(800);
+  gripperServo.write(90);
+
+  // Lower gripper with lifterServo until switchDown button pressed
+  Serial.println("Lower gripper with lifterServo until switchDown button pressed");
+
+  while (lifterPosition != 0) {
+    readSwitchDown();
+    lifterServo.write(90 + speedLifter);
+  }
+  lifterServo.write(90);
+  delay(1000);
+
+  // Open gripper a certain delay
+
+  Serial.println("Open gripper");
+  gripperServo.write(90 + speedGripper);
+  delay(400);
+  gripperServo.write(91); //open slowly all the time!
+
+
+  candles++;
+  Serial.println("Done lifting!");
+}
+
+void readSwitchDown() {
+  
+  int value = digitalRead(14);
+
+  if(value == HIGH){
+    Serial.println("Down button pressed!");
+    lifterPosition = 0;
+  } else if(value == LOW) {
+    Serial.println("Down not Pressed");
+  }
+}
+
+void readSwitchUp() {
+  
+  int value = digitalRead(15);
+
+  if(value == HIGH){
+    Serial.println("Up button pressed!");
+    lifterPosition = 1;
+  } else if(value == LOW) {
+    Serial.println("Up not Pressed");
+  }
+}
+
+
