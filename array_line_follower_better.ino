@@ -36,7 +36,6 @@ void setup() {
   }  
   Serial.println("Calibration finished");
   qtr.readLine(sensors);
-
   delay(20);
   
   leftOnBlack = rightOnBlack = middleOnBlack = false;
@@ -59,6 +58,7 @@ void loop() {
   
   if ( eventDetectionCounter == 0 ) {
     int detected = detectEvent();
+    printDetected(detected);
     act(detected);
     replacePath(detected);
   } else if (eventDetectionCounter >= 20) {
@@ -135,7 +135,6 @@ void turnRight() {
 void goStraight() {
   Serial.println("Going straight");
   path += "S";
-  //how do it here?
   setWheelSpeed(20, 20);
   delay(800);
   return;
@@ -163,8 +162,8 @@ void delayUntilOverLine() {
 /* --------------------- DETECT EVENT ----------------------------------
  * Detects events. Return correct info. Does not choose path or move on.
  *
- *  Nothing  |  T-cross  |  RIght T  |  Left T  |  4-way  |  Dead End  
- *     0           1           2          3          4           5      
+ *  Nothing  |  T-cross  |  RIght T  |  Left T  |  4-way  |  Dead End  | Turn (L or R)
+ *     0           1           2          3          4           5             6
  */
 int detectEvent(){
 
@@ -189,9 +188,8 @@ int detectEvent(){
 
   //move forward until what was black before becomes white
   setWheelSpeed(SLOW_SPEED, SLOW_SPEED);
-  
   while(leftOnBlack || rightOnBlack) { 
-    delay(30); //maybe??
+    delay(30);
 
     qtr.readLine(sensors);
     leftOnBlack = sensors[5] > THRESHOLD;
@@ -227,9 +225,8 @@ int detectEvent(){
     rightOnBlack = sensors[0] > THRESHOLD;
   }
   
-  
   setWheelSpeed(0, 0);
-
+  //check what kind of crossing it is
   if (prevLeft && prevRight && !middleOnBlack) {
     return 1; // T-cross
   } 
