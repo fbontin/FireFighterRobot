@@ -1,95 +1,164 @@
 // Gripper
 #include <Servo.h>
 Servo gripperServo, lifterServo;
-int speedGripper = 20;
-int speedLifter = 10;
+int speedGripper = 30;
+int speedLifter = 20;
 
 
 // Switch
-const byte interruptPin = 2;
-volatile int switchPressed = 0;
+const byte switchPinDown = 14;
+const byte switchPinUp = 15;
+volatile int lifterPosition = 0; //0 is lifter position down, 1 is lifter position up
 
-int doOnce = 0;
+//Ultra Sonic Sensor
+const int trigPin = 3;
+const int echoPin = 2;
+// Help variables
+long duration;
+int distance = 0;
 
-void setup(){
 
-  //gripperServo.attach(8);
-  //gripperServo.write(90);
-  lifterServo.attach(9);
-  lifterServo.write(90);
+void setup() {
+
+  delay(3000);
+  //Gripper setup
   
+    gripperServo.attach(13);
+    gripperServo.write(90);
+    lifterServo.attach(12);
+    lifterServo.write(90);
+  
+
   Serial.begin(9600);
+
   
-  //pinMode(interruptPin, INPUT_PULLUP);
-  //attachInterrupt(digitalPinToInterrupt(interruptPin), switchStateChanged, CHANGE);
+    //Down switch setup
+    pinMode(switchPinDown, INPUT_PULLUP);
+
+    //Up switch setup
+    pinMode(switchPinUp, INPUT_PULLUP);
+    
+
   
+  //Ultra Sonic setup
+  pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
+  pinMode(echoPin, INPUT); // Sets the echoPin as an Input
+  
+
+
+}
+
+int checkDistanceToObject() {
+  
+  // Clears the trigPin
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  duration = pulseIn(echoPin, HIGH);
+  // Calculating the distance
+  distance = duration * 0.034 / 2;
+
+  return distance;
 }
 
 void liftingSequence() {
 
-  
+  // Make sure gripper is open
+
+  Serial.println("Open gripper");
+  gripperServo.write(90 + speedGripper);
+  delay(800);
+
   // Close to grip candle
 
   Serial.println("Close to grip candle");
-  gripperServo.write(90 + speedGripper);
-  delay(700);
-  
-  // lift candle with lifterServo a certain degree (encoder)
+  gripperServo.write(90 - speedGripper);
+  delay(900);
+  // lift candle with lifterServo until switchUp button pressed
 
-  Serial.println("lift candle with lifterServo a certain degree");
+  Serial.println("lift candle with lifterServo until switchUp button pressed");
   
-  lifterServo.write(90 - speedLifter);
-  delay(200);
-  lifterServo.write(90);
-  delay(400);
-  
-
-  // Open gripper until button pressed (interrupt)
-  Serial.println("Open gripper until button pressed (interrupt)");
-  while(switchPressed != 1) {
-    gripperServo.write(90 - speedGripper);
+  while (lifterPosition != 1) {
+    readSwitchUp();
+    lifterServo.write(90 - speedLifter);
   }
-  
+
+  delay(200);
+
+  // Open gripper a certain delay
+  Serial.println("Open gripper a certain delay");
+
+  gripperServo.write(90 + speedGripper);
+  delay(800);
   gripperServo.write(90);
 
-  // Lower gripper with lifterServo a certain degree (encoder)
-  Serial.println("Lower gripper with lifterServo a certain degree");
-  lifterServo.write(90 + speedLifter);
-  delay(200);
+  // Lower gripper with lifterServo until switchDown button pressed
+  Serial.println("Lower gripper with lifterServo until switchDown button pressed");
+
+  while (lifterPosition != 0) {
+    readSwitchDown();
+    lifterServo.write(90 + speedLifter);
+  }
   lifterServo.write(90);
+  delay(1000);
+
+  // Open gripper a certain delay
+
+  Serial.println("Open gripper");
+  gripperServo.write(90 + speedGripper);
+  delay(800);
+  gripperServo.write(90);
+
   Serial.println("Done lifting!");
 }
- 
-void loop(){
 
-  /*
-  switchPressed = digitalRead(interruptPin);
-  */
+void loop() {
 
-  /*
-  if(doOnce != 1) {
+  
+  int distanceToObject = checkDistanceToObject();
+  //Serial.println(distanceToObject);
+  
+  if (distanceToObject < 5) {
+    Serial.print("Close object detected at: ");
+    Serial.println(checkDistanceToObject());
+
     Serial.println("Do lifting!");
     liftingSequence();
-    doOnce = 1;
-  } else {
-    Serial.println("Already done with the lift!");
-    lifterServo.write(90);
-    gripperServo.write(90);
-  }
-  */
-  
-  delay(2000);
-}
-
-void switchStateChanged() {
-  Serial.println("button pressed!");
-  
-  if(switchPressed == 1) {
-    switchPressed = 0;
-    Serial.println("New value is 0");
-  } else {
-    switchPressed = 1;
-    Serial.println("New value is 1");
+    
   }
 
+  delay(3000);
 }
+
+void readSwitchDown() {
+  
+  int value = digitalRead(14);
+
+  if(value == HIGH){
+    Serial.println("Down button pressed!");
+    lifterPosition = 0;
+  } else if(value == LOW) {
+    Serial.println("Down not Pressed");
+  }
+  
+}
+
+void readSwitchUp() {
+  
+  int value = digitalRead(15);
+
+  if(value == HIGH){
+    Serial.println("Up button pressed!");
+    lifterPosition = 1;
+  } else if(value == LOW) {
+    Serial.println("Up not Pressed");
+  }
+  
+}
+
+
