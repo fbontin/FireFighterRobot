@@ -2,7 +2,7 @@
 #include <Servo.h>
 
 #define NUM_SENSORS 6
-#define THRESHOLD 300
+#define THRESHOLD 170
 #define SLOW_SPEED 5
 
 Servo left;
@@ -13,6 +13,32 @@ bool leftOnBlack, rightOnBlack, middleOnBlack;
 String path;
 bool replaceNext;
 int eventDetectionCounter;
+int candles;
+int distances[2] = {20,20};
+
+//Gripper
+Servo gripperServo, lifterServo;
+int speedGripper = 30;
+int speedLifter = 20;
+
+//Switch
+const byte switchPinDown = 14;
+const byte switchPinUp = 15;
+volatile int lifterPosition = 0;
+
+//Ultra Sonic Sensor
+const int trigPin = 3;
+const int echoPin = 2;
+// Help variables
+//long duration;
+//int distance = 0;
+
+//LEDS
+const int ledPin =  16;
+int ledState = LOW;
+unsigned long previousMillis = 0;
+const long interval = 500;
+
 
 // sensors connected [X-XXXX-X]
 QTRSensorsRC qtr((unsigned char[]) {6, 7, 8, 9, 10, 11}, NUM_SENSORS);
@@ -20,7 +46,6 @@ QTRSensorsRC qtr((unsigned char[]) {6, 7, 8, 9, 10, 11}, NUM_SENSORS);
 
 void setup() {
   Serial.begin(9600);
-  
   Serial.println("Calibrating");
   
   //int calSpeed = 5;
@@ -41,21 +66,39 @@ void setup() {
   leftOnBlack = rightOnBlack = middleOnBlack = false;
   path = "";
   replaceNext = false;
+  candles = 0;
 
   eventDetectionCounter = 0;
 
   left.attach(4);
   right.attach(5);
-  speed = 20;
+  speed = 60;
   setWheelSpeed(0, 0);
+
+  gripperServo.attach(13);
+  gripperServo.write(91);
+  lifterServo.attach(12);
+  lifterServo.write(90);
+
+  //Switch setup
+  pinMode(switchPinDown, INPUT_PULLUP);
+  pinMode(switchPinUp, INPUT_PULLUP);
+
+  //Ultra Sonic setup
+  pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
+  pinMode(echoPin, INPUT); // Sets the echoPin as an Input
+
+  //Leds setup
+  pinMode(ledPin, OUTPUT);
 }
 
 /*
  *  -------------------------- LOOP BEGIN ----------------------------
  */
 void loop() {
-
   
+  //event detection
+ 
   if ( eventDetectionCounter == 0 ) {
     int detected = detectEvent();
     printDetected(detected);
@@ -63,48 +106,95 @@ void loop() {
     replacePath(detected);
   } else if (eventDetectionCounter >= 20) {
     eventDetectionCounter = 0;
-    Serial.println("Stopped detecting for a bit ");
   } else {
     eventDetectionCounter++;
   }
+  
   regulate();
   
+  checkForCandle();
+
+  toggleLEDS();
+
   //setWheelSpeed(0, 0);
+  
   delay(20);
 }
 
 //when a crossing has been detected, this method acts (turns left, continues straight or whatever
 void act(int detected) {
-  switch (detected) {
-    case 1: //T-cross, left or right
-      turnLeft();
-      break;
-    case 2: //Right T
-      goStraight();
-      break;
-    case 3: //Left T
-      turnLeft();
-      break;
-    case 4: //4-way
-      turnLeft();
-      break;
-    case 5: //Dead end
-      replaceNext = true;
-      uTurn();
-      break;
-    case 6: //A turn
-      eventDetectionCounter = 1;
-      break;
-    default:
-      break;
+
+  if (detected != 0){
+    Serial.println("Path: " + path);
   }
-  Serial.println("Path: " + path);
+
+  if (candles < 3){
+    
+    switch (detected) {
+      case 1: //T-cross, left or right
+        turnLeft(true);
+        break;
+      case 2: //Right T
+        goStraight(true);
+        break;
+      case 3: //Left T
+        turnLeft(true);
+        break;
+      case 4: //4-way
+        turnLeft(true);
+        break;
+      case 5: //Dead end
+        replaceNext = true;
+        uTurn(true);
+        break;
+      case 6: //A turn
+        eventDetectionCounter = 1;
+        break;
+      default:
+        break;
+    }
+  } else if (detected < 5 && detected > 0){
+
+    if (path.length() != 0){
+      char last = path.charAt(path.length()-1);
+      path = path.substring(0, path.length()-1);
+
+
+      Serial.println("Path: " + path + "[" + last + "]");
+
+      switch (last) {
+        case 'R':
+          Serial.println("Going back, turning: L");
+          turnLeft(false);
+          break;
+        case 'S':
+          Serial.println("Going back, turning: S");
+          goStraight(false);
+          break;
+        case 'L':
+          Serial.println("Going back, turning: R");
+          turnRight(false);
+          break;
+        default:
+          break;
+      }
+      Serial.println("last: " + last);  
+    }
+  } else if (detected == 5 && path.length() < 2) {
+    //AT THE END
+    Serial.println("MAZE FINISHED");
+    while(true) {
+      setWheelSpeed(20, -20);
+    }
+  }
+  
 }
 
 void replacePath(int detected) {
   if (replaceNext && detected < 5 && detected > 0) {
     String lastThree = path.substring(path.length() - 3);
-    Serial.println("REPLACING" + lastThree);
+    Serial.println("Path: " + path);
+    Serial.println("Replacing: " + lastThree);
     if (lastThree == "LUS") {
       path = path.substring(0, path.length() - 3) + "R";
     } else if (lastThree == "SUL") {
@@ -112,38 +202,42 @@ void replacePath(int detected) {
     } else if (lastThree == "LUL") {
       path = path.substring(0, path.length() - 3) + "S";
     } else {
-      Serial.print("Sometin is focked wid replacin");
+      Serial.print("Tried to replace something that should not exist");
     }
+    Serial.println("New path: " + path);
     replaceNext = false;
   }
 }
 
-void turnLeft() {
+void turnLeft(bool append) {
   Serial.println("Turning left");
-  path += "L";
+  if(append) path += "L";
   setWheelSpeed(-10, 20);
   delayUntilOverLine();
 }
 
-void turnRight() {
+//NEVVAH Taidsted
+void turnRight(bool append) {
   Serial.println("Turning right");
-  path += "R";
+  if(append) path += "R";
   setWheelSpeed(20, -10);
   delayUntilOverLine();
 }
 
-void goStraight() {
+void goStraight(bool append) {
   Serial.println("Going straight");
-  path += "S";
+  if(append) path += "S";
   setWheelSpeed(20, 20);
   delay(800);
   return;
 }
 
-void uTurn() {
+void uTurn(bool append) {
   Serial.println("U-turn");
-  if (path.charAt(path.length() - 1) != 'U'){
-      path += "U";
+  if(path.length() != 0){
+    if (path.charAt(path.length() - 1) != 'U'){
+        if(append) path += "U";
+    }
   }
   setWheelSpeed(-20, 20);
   delayUntilOverLine();
@@ -174,7 +268,6 @@ int detectEvent(){
   middleOnBlack = sensors[2] > THRESHOLD || sensors[3] > THRESHOLD;
   bool outerMiddleOnBlack = sensors[1] > THRESHOLD || sensors[4] > THRESHOLD;
 
-  printAllLineSensors();
 
   if(!leftOnBlack && !rightOnBlack && !middleOnBlack && !outerMiddleOnBlack){
     return 5; //dead end
@@ -187,7 +280,7 @@ int detectEvent(){
   bool prevRight = rightOnBlack;
 
   //move forward until what was black before becomes white
-  setWheelSpeed(SLOW_SPEED, SLOW_SPEED);
+  setWheelSpeed(SLOW_SPEED + 3, SLOW_SPEED);
   while(leftOnBlack || rightOnBlack) { 
     delay(30);
 
@@ -215,17 +308,7 @@ int detectEvent(){
     leftOnBlack = sensors[5] > THRESHOLD;
     rightOnBlack = sensors[0] > THRESHOLD;
   }
-
   
-  //continue back until white again
-  while (!leftOnBlack && !rightOnBlack) {
-    delay(30); 
-    qtr.readLine(sensors);
-    leftOnBlack = sensors[5] > THRESHOLD;
-    rightOnBlack = sensors[0] > THRESHOLD;
-  }
-  
-  setWheelSpeed(0, 0);
   //check what kind of crossing it is
   if (prevLeft && prevRight && !middleOnBlack) {
     return 1; // T-cross
@@ -240,19 +323,33 @@ int detectEvent(){
     return 4; // 4-way
   }
 
-  if(prevLeft) {
-    setWheelSpeed(10, 0);
+  //if only turn, not crossing
+  if (prevRight) turnLeft(false);
+  else if (prevLeft) turnRight(false);
+/*
+  int leftSpeed = 0; 
+  int rightSpeed = 0; 
+  
+  if (prevLeft) leftSpeed = 10;
+  if (prevRight) rightSpeed = 10;
+
+  setWheelSpeed(leftSpeed, rightSpeed);
+*/
+  /*
+  //continue back until white again
+  while (!leftOnBlack && !rightOnBlack) {
+    delay(30); 
+    qtr.readLine(sensors);
+    leftOnBlack = sensors[5] > THRESHOLD;
+    rightOnBlack = sensors[0] > THRESHOLD;
   }
-  if(prevRight) {
-    setWheelSpeed(0, 10);
-  }
-  delay(600);
+  */
   return 6;
 }
 
 //sets speed for wheels
 void setWheelSpeed(int leftSpeed, int rightSpeed) {
-  left.write(90 - leftSpeed);
+  left.write(94 - leftSpeed);
   right.write(90 + rightSpeed);
 }
 
@@ -260,7 +357,7 @@ void setWheelSpeed(int leftSpeed, int rightSpeed) {
 int regulate() {
   unsigned int position = qtr.readLine(sensors);
   int error = position - 2500; //2500 is middle
-  float p = 0.016;  //2500 = max(error)
+  float p = 0.048;  //2500 = max(error)
   float regSpeed = error * p;
 
   int leftSpeed = speed + regSpeed;
@@ -287,10 +384,9 @@ void printDetected(int detected) {
           Serial.println("4-way");
           break;
         case 5: 
-          Serial.println("DEAD end");
+          Serial.println("Dead end");
           break;
         default:
-          Serial.println("Weird result from detect");
           break;
       }
   }
@@ -298,10 +394,157 @@ void printDetected(int detected) {
 
 //prints values for all line sensors
 void printAllLineSensors() {
-  Serial.print("\n");
   Serial.print("Line sensors: ");
   for (int i = 0; i < NUM_SENSORS; i++) {
     Serial.print(sensors[i]);
     Serial.print(" ");
   }
+  Serial.print("\n");
 }
+
+/* ------------------- GRIPPER FUNCTIONS ------------------------------
+ * --------------------------------------------------------------------
+ * --------------------------------------------------------------------
+ */
+
+void checkForCandle(){
+  
+    //distance detection
+    int distanceToObject = checkDistanceToObject();
+
+
+    if(distances[1] < 6 && distances[1] > 1 && distances[0] < 6 && distances[0] > 1 && distanceToObject < 5 && distanceToObject > 1) {
+
+      Serial.print("Close object detected at: ");
+      Serial.println(checkDistanceToObject());
+  
+      Serial.println("Do lifting!");
+      
+      // TODO (2,2)?
+      setWheelSpeed(3, 2);
+      
+      liftingSequence();
+      
+    }
+    distances[1] = distances[0];
+    distances[0] = distanceToObject;
+
+    /*
+    if (distanceToObject < 5) {
+      
+      Serial.print("Close object detected at: ");
+      Serial.println(checkDistanceToObject());
+  
+      Serial.println("Do lifting!");
+      setWheelSpeed(0, 0);
+      liftingSequence();
+    }
+    */
+}
+
+int checkDistanceToObject() {
+
+  long duration;
+  int distance = 0;
+  
+  // Clears the trigPin
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  duration = pulseIn(echoPin, HIGH);
+  // Calculating the distance
+  distance = duration * 0.034 / 2;
+
+  return distance;
+}
+
+void liftingSequence() {
+  delay(200);
+  // Close to grip candle
+  Serial.println("Close to grip candle");
+  gripperServo.write(90 - speedGripper);
+  delay(900);
+
+  Serial.println("lift candle with lifterServo until switchUp button pressed");
+  
+  while (lifterPosition != 1) {
+    readSwitchUp();
+    lifterServo.write(90 - speedLifter);
+  }
+
+  delay(200);
+
+  // Open gripper a certain delay
+  Serial.println("Open gripper a certain delay");
+
+  gripperServo.write(90 + speedGripper);
+  delay(800);
+  gripperServo.write(90);
+
+  // Lower gripper with lifterServo until switchDown button pressed
+  Serial.println("Lower gripper with lifterServo until switchDown button pressed");
+
+  while (lifterPosition != 0) {
+    readSwitchDown();
+    lifterServo.write(90 + speedLifter);
+  }
+  lifterServo.write(90);
+  //delay(1000);
+
+  // Open gripper a certain delay
+
+  Serial.println("Open gripper");
+  gripperServo.write(90 + speedGripper);
+  delay(400);
+  gripperServo.write(91); //open slowly all the time!
+
+  candles++;
+  
+  Serial.println("Done lifting!");
+}
+
+void toggleLEDS() {
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousMillis >= interval) {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+
+    // if the LED is off turn it on and vice-versa:
+    if (ledState == LOW) {
+      ledState = HIGH;
+    } else {
+      ledState = LOW;
+    }
+
+    // set the LED with the ledState of the variable:
+    digitalWrite(ledPin, ledState);
+  }
+}
+
+void readSwitchDown() {
+  
+  int value = digitalRead(14);
+
+  if(value == HIGH){
+    Serial.println("Down button pressed!");
+    lifterPosition = 0;
+  }
+}
+
+void readSwitchUp() {
+  
+  int value = digitalRead(15);
+
+  if(value == HIGH){
+    Serial.println("Up button pressed!");
+    lifterPosition = 1;
+  }
+}
+
+
