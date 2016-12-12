@@ -112,13 +112,14 @@ void loop() {
   
   regulate();
   
-  checkForCandle();
-
+  if (candles < 3) {
+    checkForCandle();
+  }
+  
   toggleLEDS();
 
   //setWheelSpeed(0, 0);
-  
-  delay(20);
+  //delay(20);
 }
 
 //when a crossing has been detected, this method acts (turns left, continues straight or whatever
@@ -216,7 +217,6 @@ void turnLeft(bool append) {
   delayUntilOverLine();
 }
 
-//NEVVAH Taidsted
 void turnRight(bool append) {
   Serial.println("Turning right");
   if(append) path += "R";
@@ -228,7 +228,7 @@ void goStraight(bool append) {
   Serial.println("Going straight");
   if(append) path += "S";
   setWheelSpeed(20, 20);
-  delay(800);
+  delay(200);
   return;
 }
 
@@ -268,7 +268,6 @@ int detectEvent(){
   middleOnBlack = sensors[2] > THRESHOLD || sensors[3] > THRESHOLD;
   bool outerMiddleOnBlack = sensors[1] > THRESHOLD || sensors[4] > THRESHOLD;
 
-
   if(!leftOnBlack && !rightOnBlack && !middleOnBlack && !outerMiddleOnBlack){
     return 5; //dead end
   }
@@ -300,6 +299,7 @@ int detectEvent(){
   //save middleValue. True if there is a road forward
   middleOnBlack = sensors[2] > THRESHOLD || sensors[3] > THRESHOLD;
 
+  //--------------------Hmm, WTF?-----------------------------??
   //then, move back until they are black
   setWheelSpeed(-SLOW_SPEED, -SLOW_SPEED);
   while (leftOnBlack || rightOnBlack) {
