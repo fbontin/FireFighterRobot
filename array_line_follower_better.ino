@@ -4,6 +4,7 @@
 #define NUM_SENSORS 6
 #define THRESHOLD 170
 #define SLOW_SPEED 5
+#define REGULATOR_P 0.024
 
 Servo left;
 Servo right;
@@ -21,7 +22,7 @@ Servo gripperServo, lifterServo;
 int speedGripper = 30;
 int speedLifter = 20;
 
-//Switch
+//Switches
 const byte switchPinDown = 14;
 const byte switchPinUp = 15;
 volatile int lifterPosition = 0;
@@ -29,18 +30,14 @@ volatile int lifterPosition = 0;
 //Ultra Sonic Sensor
 const int trigPin = 3;
 const int echoPin = 2;
-// Help variables
-//long duration;
-//int distance = 0;
 
 //LEDS
 const int ledPin =  16;
 int ledState = LOW;
 unsigned long previousMillis = 0;
-const long interval = 500;
+long interval = 500;
 
-
-// sensors connected [X-XXXX-X]
+// Line sensor; sensors connected [X-XXXX-X]
 QTRSensorsRC qtr((unsigned char[]) {6, 7, 8, 9, 10, 11}, NUM_SENSORS);
 
 
@@ -51,14 +48,9 @@ void setup() {
   //int calSpeed = 5;
   //setWheelSpeed(calSpeed, -calSpeed);
   for (int i = 0; i < 100; i++) {
-    /*
-    if (i == 25) {setWheelSpeed(-calSpeed, calSpeed);}
-    if (i == 50) {setWheelSpeed(calSpeed, -calSpeed);}
-    if (i == 75) {setWheelSpeed(-calSpeed, calSpeed);}
-    */
     qtr.calibrate();
     delay(20);
-  }  
+  }
   Serial.println("Calibration finished");
   qtr.readLine(sensors);
   delay(20);
@@ -72,7 +64,7 @@ void setup() {
 
   left.attach(4);
   right.attach(5);
-  speed = 60;
+  speed = 30;
   setWheelSpeed(0, 0);
 
   gripperServo.attach(13);
@@ -98,7 +90,7 @@ void setup() {
 void loop() {
   
   //event detection
- 
+
   if ( eventDetectionCounter == 0 ) {
     int detected = detectEvent();
     printDetected(detected);
@@ -115,11 +107,14 @@ void loop() {
   if (candles < 3) {
     checkForCandle();
   }
-  
   toggleLEDS();
 
-  //setWheelSpeed(0, 0);
-  //delay(20);
+  delay(20);
+  /*
+  setWheelSpeed(0, 0);
+  qtr.readLine(sensors);
+  printAllLineSensors();
+  */
 }
 
 //when a crossing has been detected, this method acts (turns left, continues straight or whatever
@@ -165,18 +160,19 @@ void act(int detected) {
 
       switch (last) {
         case 'R':
-          Serial.println("Going back, turning: L");
+          Serial.println("Popping R, turning: L");
           turnLeft(false);
           break;
         case 'S':
-          Serial.println("Going back, turning: S");
+          Serial.println("Popping S, turning: S");
           goStraight(false);
           break;
         case 'L':
-          Serial.println("Going back, turning: R");
+          Serial.println("Popping L, turning: R");
           turnRight(false);
           break;
         default:
+          Serial.println("Popping something which is not L, R or S");
           break;
       }
       Serial.println("last: " + last);  
@@ -184,8 +180,11 @@ void act(int detected) {
   } else if (detected == 5 && path.length() < 2) {
     //AT THE END
     Serial.println("MAZE FINISHED");
+    interval = 100;
     while(true) {
       setWheelSpeed(20, -20);
+      toggleLEDS();
+      delay(20);
     }
   }
   
@@ -202,6 +201,10 @@ void replacePath(int detected) {
       path = path.substring(0, path.length() - 3) + "R";
     } else if (lastThree == "LUL") {
       path = path.substring(0, path.length() - 3) + "S";
+    } else if (lastThree == "SUS") {
+      path = path.substring(0, path.length() - 3) + "U";
+    } else if (lastThree == "RUL") {
+      path = path.substring(0, path.length() - 3) + "U";
     } else {
       Serial.print("Tried to replace something that should not exist");
     }
@@ -246,8 +249,8 @@ void uTurn(bool append) {
 //delays until line sensor is over line
 void delayUntilOverLine() {
   delay(700); //so that it won't read the original line.
-  int error = 2001;
-  while (error > 2000 || error < -2000) {
+  int error = 2000;
+  while (error > 1500 || error < -1500) {
       error = qtr.readLine(sensors) - 2500;
       delay(20);
   }
@@ -357,8 +360,7 @@ void setWheelSpeed(int leftSpeed, int rightSpeed) {
 int regulate() {
   unsigned int position = qtr.readLine(sensors);
   int error = position - 2500; //2500 is middle
-  float p = 0.048;  //2500 = max(error)
-  float regSpeed = error * p;
+  float regSpeed = error * REGULATOR_P;
 
   int leftSpeed = speed + regSpeed;
   int rightSpeed = speed - regSpeed;
@@ -424,22 +426,16 @@ void checkForCandle(){
       setWheelSpeed(3, 2);
       
       liftingSequence();
+      candles++;
+
+      if (candles >= 3) {
+        lifterServo.detach();
+        gripperServo.detach();
+      }
       
     }
     distances[1] = distances[0];
     distances[0] = distanceToObject;
-
-    /*
-    if (distanceToObject < 5) {
-      
-      Serial.print("Close object detected at: ");
-      Serial.println(checkDistanceToObject());
-  
-      Serial.println("Do lifting!");
-      setWheelSpeed(0, 0);
-      liftingSequence();
-    }
-    */
 }
 
 int checkDistanceToObject() {
@@ -502,8 +498,6 @@ void liftingSequence() {
   gripperServo.write(90 + speedGripper);
   delay(400);
   gripperServo.write(91); //open slowly all the time!
-
-  candles++;
   
   Serial.println("Done lifting!");
 }
